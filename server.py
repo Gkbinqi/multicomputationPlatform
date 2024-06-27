@@ -3,9 +3,6 @@ import datetime
 import os
 from flask import (Flask, render_template, request, redirect, url_for, session, make_response
 , json, jsonify, abort, flash)
-from wtforms import Form, StringField, PasswordField, SubmitField, validators  # 类型
-from flask_wtf import FlaskForm
-from wtforms.validators import DataRequired, Length, Email, EqualTo  # 验证数据不能为空 验证数据是否相同
 
 # 导入登录模块
 
@@ -69,8 +66,7 @@ class Room(db.Model):
     name = db.Column(db.String(32), unique=True)  # 房间名
     capacity = db.Column(db.Integer)  # 房间容量
     password = db.Column(db.String(32))  # 房间密码 自动生成
-    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'))  # 表关系 一个房间可以有多个用户 外键Foreign Key, 用于关联另外一张表
-
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'))  # 表关系 外键Foreign Key, 用于关联另外一张表
     participants = db.relationship('User', secondary='room_user', backref='rooms')
 
 
@@ -92,6 +88,13 @@ room_user = db.Table('room_user',
 '''''''''''''''''
 
 
+def return_dashboard():
+    if session.get('role_id') == 1:
+        return redirect(url_for('admin_dashboard'))
+    else:
+        return redirect(url_for('dashboard'))
+
+
 @app.route('/', methods=['GET', 'POST'])  # 定义路由
 def root():
     # 检查session是否存在
@@ -99,7 +102,10 @@ def root():
         uid = session.get('id')
         user = User.query.filter_by(id=uid).first()
         if user:
-            return redirect(url_for('dashboard'))
+            if session.get('role_id') == 1:
+                return redirect(url_for('admin_dashboard'))
+            else:
+                return redirect(url_for('dashboard'))
         else:
             session.pop('user_id', None)
     return redirect(url_for('login'))
@@ -122,7 +128,10 @@ def login():
             session['name'] = user.name
             session['role_id'] = user.role_id
             print(f'{datetime.datetime.now()}, {name} 登录成功')
-            return redirect(url_for('dashboard'))
+            if session.get('role_id') == 1:
+                return redirect(url_for('admin_dashboard'))
+            else:
+                return redirect(url_for('dashboard'))
         else:
             return render_template('login.html'
                                    , error_message="用户名或密码无效！")
@@ -171,12 +180,73 @@ def register():
             return redirect(url_for('login'))
 
 
+# 登录过后的页面
+
+
 @app.route('/dashboard', methods=['GET'])
 def dashboard():
     if 'id' not in session:
         return redirect(url_for('login'))
+
     rooms = Room.query.all()
     return render_template('dashboard.html', rooms=rooms)
+
+
+@app.route('/admin_dashboard', methods=['GET'])
+def admin_dashboard():
+    if 'id' not in session:
+        return redirect(url_for('login'))
+    if session.get('role_id') != 1:
+        return redirect(url_for('dashboard'))
+
+    rooms = Room.query.all()
+    return render_template('admin_dashboard.html', rooms=rooms)
+
+
+@app.route('/create_room', methods=['GET', 'POST'])
+def create_room():
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        name = request.form.get('name')
+        capacity = request.form.get('capacity')
+        password = request.form.get('password')
+        owner_id = session.get('id')
+        new_room = Room(name=name, capacity=capacity, password=password, owner_id=owner_id)
+        db.session.add(new_room)
+        db.session.commit()
+        flash('Room created successfully!')
+        print(f'{datetime.datetime.now()}, {name, capacity, password, owner_id} 创建房间成功')
+        return redirect(url_for('admin_dashboard'))
+    return render_template('create_room.html')
+
+
+@app.route('/modify_room', methods=['GET'])
+def modify_room():
+    room_id = request.args.get('id')
+    room = Room.query.get(room_id)
+    if room:
+        return render_template('modify_room.html', room=room)
+    else:
+        flash('Room not found', 'error')
+        return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/update_room/<int:room_id>', methods=['POST'])
+def update_room(room_id):
+    room = Room.query.get(room_id)
+    if room:  # 房间存在
+        room.name = request.form['name']
+        room.capacity = request.form['capacity']
+        room.password = request.form['password']
+        room.owner_id = request.form['owner_id']
+        db.session.commit()
+        flash('Room updated successfully', 'success')
+    else:
+        flash('Room not found', 'error')
+        abort(404)
+    return redirect(url_for('admin_dashboard'))
 
 
 @app.route('/search_room', methods=['GET'])
@@ -185,13 +255,28 @@ def search_room():
     if room_id:
         room = Room.query.filter_by(id=room_id).first()  # 在数据库中查找房间
         if room:
-            return redirect(url_for('password', room_id=room.id))
+            if session.get('role_id') == 1 or session.get('id') == room.owner_id:  # 房主或管理员无需验证
+                return redirect(url_for('room', room_id=room.id))
+            else:
+                return redirect(url_for('password', room_id=room.id))
         else:
             flash('房间不存在')
-            return redirect(url_for('dashboard'))
+            return_dashboard()
     else:
         flash('请输入房间ID')
-        return redirect(url_for('dashboard'))
+        return_dashboard()
+
+
+@app.route('/delete_room', methods=['DELETE'])
+def delete_room():
+    room_id = request.args.get('id')
+    room = Room.query.get(room_id)
+    if room:
+        db.session.delete(room)
+        db.session.commit()
+        return 'Delete successfully', 204
+    else:
+        abort(404)
 
 
 @app.route('/password/<int:room_id>', methods=['GET', 'POST'])
@@ -204,6 +289,10 @@ def verify_password(room_id):
     password = request.form.get('password')
     room = Room.query.get(room_id)
     if room and room.password == password:
+        # 向关系表中添加用户
+        # room_user.insert().values(room_id=room_id, user_id=session.get('id'))
+        # db.session.commit()
+        print(f'{datetime.datetime.now()}, {session.get("name")} 进入房间 {room_id}')
         return redirect(url_for('room', room_id=room.id))
     else:
         flash('密码错误', 'error')
@@ -220,50 +309,22 @@ def room(room_id):
     if not room:
         return abort(404)
 
+    # 将用户添加到房间参与者列表
+    # if session.get('id') not in room.participants:
+    #     room_user.insert((room_id, session.get('id')))
+    #     db.session.commit()
+
     if request.method == 'GET':
-        return render_template('room.html', room=room)
+        # 查询房间参与者
+        participants = room.participants
+        return render_template('room.html', room=room, participants=participants)
     elif request.method == 'POST':
-        if 'join' in request.form:
-            # 加入房间
-            if room.capacity > len(room.invited_users):
-                room.invited_users.append(session['id'])
-                db.session.commit()
-                return redirect(url_for('room', room_id=room_id))
-            else:
-                return render_template('room.html', room=room, error_message='房间已满！')
-        elif 'quit' in request.form:
+        if 'quit' in request.form:
             # 退出房间
-            room.invited_users.remove(session['id'])
+            room.participants.remove(session.get('id'))
             db.session.commit()
-            return redirect(url_for('room', room_id=room_id))
-        elif 'invite' in request.form:
-            # 邀请用户
-            user_name = request.form.get('user_name')
-            user = User.query.filter_by(name=user_name).first()
-            if user:
-                room.invited_users.append(user.id)
-                db.session.commit()
-                return redirect(url_for('room', room_id=room_id))
-            else:
-                return render_template('room.html', room=room, error_message='用户不存在！')
-        elif 'create' in request.form:
-            # 创建房间
-            name = request.form.get('name')
-            capacity = request.form.get('capacity')
-            password = request.form.get('password')
-            owner_id = session['id']
-            # 检查是否有相同房间名
-            room = Room.query.filter_by(name=name).first()
-            if room:
-                return render_template('room.html', room=room, error_message='房间名已存在！')
-            else:  # 创建对象 插入数据
-                room = Room(name=name, capacity=capacity, password=password, owner_id=owner_id)
-                db.session.add(room)  # session记录到数据库
-                db.session.commit()  # 提交任务
-                return redirect(url_for('room', room_id=room.id))
-        else:
-            return redirect(url_for('room', room_id=room_id))
-    return render_template('room.html')
+            return redirect(url_for('dashboard'))
+    return render_template('room.html', room=room)
 
 
 # 自定义错误页面

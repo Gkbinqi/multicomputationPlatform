@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/favicon.ico">
-    <title>Dashboard</title>
+    <title>Admin Dashboard</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -76,17 +76,31 @@
         .action-buttons button {
             margin-left: 5px;
         }
+        .button-group button {
+            margin-right: 5px;
+            padding: 5px 10px;
+            border: none;
+            cursor: pointer;
+        }
+        .button-group .modify-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .button-group .delete-btn {
+            background-color: #f44336;
+            color: white;
+        }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>Welcome to the Dashboard</h1>
-        <a href="{{ url_for('dashboard') }}">Welcome back! {{ session.get('name') }}</a>
-        <a href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+        <h1>Welcome to the Admin Dashboard</h1>
+        <a href="{{ url_for('admin_dashboard') }}">Welcome back! Administrator {{ session.get('name') }}</a>
+        <a href="{{ url_for('admin_dashboard') }}">Back to Admin Dashboard</a>
         <a href="{{ url_for('logout') }}">Logout</a>
     </div>
     <div class="container">
-        <h1>Dashboard</h1>
+        <h1>Admin Dashboard</h1>
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -112,7 +126,8 @@
                     <th>Name</th>
                     <th>Capacity</th>
                     <th>Password</th>
-                    <th>Owner ID</th>
+                    <th>Owner_id</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -123,6 +138,10 @@
                     <td>{{ room.capacity }}</td>
                     <td>{{ room.password }}</td>
                     <td>{{ room.owner_id }}</td>
+                    <td class="button-group">
+                        <button class="modify-btn" onclick="modifyRoom({{ room.id }})">Modify</button>
+                        <button class="delete-btn" onclick="deleteRoom({{ room.id }})">Delete</button>
+                    </td>
                 </tr>
             {% endfor %}
             </tbody>
@@ -137,6 +156,23 @@
                 alert('Please enter a Room ID');
             }
         }
+        function modifyRoom(id) {
+            window.location.href = '/modify_room?id=' + id;
+        }
+        function deleteRoom(id) {
+            if (confirm('该操作不可撤回, 确定要删除房间?')) {
+                fetch(`/delete_room?id=${id}`, {
+                    method: 'DELETE'
+                }).then(response => {
+                    if (response.ok) {
+                        window.location.reload();
+                    } else {
+                        alert('Failed to delete the room.');
+                    }
+                });
+            }
+        }
     </script>
 </body>
 </html>
+
