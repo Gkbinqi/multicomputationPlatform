@@ -70,15 +70,35 @@ class Room(db.Model):
     """房间表"""
     __tablename__ = 'room'
 
+    # 以下内容展示在dashboard
     id = db.Column(db.Integer, primary_key=True)  # 主键 设置主键后默认设置自增长
-    name = db.Column(db.String(32), unique=True)  # 房间名
-    capacity = db.Column(db.Integer)  # 房间容量
-    password = db.Column(db.String(32))  # 房间密码 自动生成
+
+    name = db.Column(db.String(32), unique=True, nullable=False)  # 房间名
+    capacity = db.Column(db.Integer, nullable=False)  # 房间容量
+    status = db.Column(db.Enum('waiting', 'running', 'finished'), default='waiting', nullable=False)
+
+    # 以下关联内容展示在dashboard
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'))  # 表关系 外键Foreign Key, 用于关联另外一张表
+
+    # 以下内容不展示在dashboard, 展示在房间详情页面
+    password = db.Column(db.String(32), nullable=False)  # 房间密码
+
+    result = db.Column(db.String(1000))  # 房间结果
 
     # 与User形成多对多关系 第三张关联表RoomToUser
     # Room 可以通过participants属性访问所有参与者 User 可以通过rooms属性访问所有房间
     participants = db.relationship('User', secondary='room_user', backref='rooms')
+
+    # input不展示
+    inputs = db.relationship('Input', backref='room')
+
+
+class Input(db.Model):
+    """输入表"""
+    __tablename__ = 'input'
+    id = db.Column(db.Integer, primary_key=True)  # 主键 设置主键后默认设置自增长
+    room_id = db.Column(db.Integer, db.ForeignKey('room.id'))  # 房间ID
+    input_text = db.Column(db.String(1000))  # 输入内容
 
 
 # 登录管理模块
@@ -224,7 +244,8 @@ def create_room():
         capacity = request.form.get('capacity')
         password = request.form.get('password')
         owner_id = session.get('id')
-        new_room = Room(name=name, capacity=capacity, password=password, owner_id=owner_id)
+        new_room = Room(name=name, capacity=capacity, password=password, owner_id=owner_id
+                        , status='waiting', result='')
         db.session.add(new_room)
         db.session.commit()
         flash('Room created successfully!')
@@ -236,6 +257,9 @@ def create_room():
 # 查
 @app.route('/search_room', methods=['GET'])
 def search_room():
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
     room_id = request.args.get('id')
     if room_id:
         room = Room.query.get(room_id)  # 使用主键查找房间
@@ -255,6 +279,9 @@ def search_room():
 # 改
 @app.route('/modify_room', methods=['GET'])
 def modify_room():
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
     room_id = request.args.get('id')
     room = Room.query.get(room_id)
     if room:
@@ -266,6 +293,9 @@ def modify_room():
 
 @app.route('/update_room/<int:room_id>', methods=['POST'])
 def update_room(room_id):
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
     room = Room.query.get(room_id)
     if room:  # 房间存在
         room.name = request.form['name']
@@ -283,6 +313,9 @@ def update_room(room_id):
 # 删
 @app.route('/delete_room', methods=['DELETE'])
 def delete_room():
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
     room_id = request.args.get('id')
     room = Room.query.get(room_id)
     if room:
@@ -299,6 +332,9 @@ def delete_room():
 # 输入房间密码
 @app.route('/password/<int:room_id>', methods=['GET', 'POST'])
 def password(room_id):
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
     return render_template('password.html', room_id=room_id)
 
 
@@ -327,9 +363,22 @@ def verify_password(room_id):
         return redirect(url_for('dashboard'))
 
 
-@app.route('/dashboard/room/<int:room_id>', methods=['GET', 'POST'])
+@app.route('/dashboard/room/<int:room_id>', methods=['GET'])
 def room(room_id):
     # 检查session是否存在
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
+    # 查询房间是否存在
+    room = Room.query.filter_by(id=room_id).first()
+    if not room:
+        return abort(404)
+
+    return render_template('room.html', room=room, participants=room.participants)
+
+
+@app.route('/room/<int:room_id>/user_input', methods=['GET', 'POST'])
+def user_input(room_id):
     if 'id' not in session:
         return redirect(url_for('login'))
     # 查询房间是否存在
@@ -338,14 +387,39 @@ def room(room_id):
         return abort(404)
 
     if request.method == 'GET':
-        return render_template('room.html', room=room, participants=room.participants)
+        return render_template('user_input.html', room_id=room_id)
     elif request.method == 'POST':
-        if 'quit' in request.form:
-            # 退出房间
-            room.participants.remove(session.get('id'))
-            db.session.commit()
-            return redirect(url_for('dashboard'))
-    return render_template('room.html', room=room)
+        input_text = request.form.get('input')
+        new_input = Input(room_id=room_id, input_text=input_text)
+        db.session.add(new_input)
+        db.session.commit()
+        print(f'{datetime.datetime.now()}, {session.get("name")} 输入 {input_text} 到房间 {room_id}')
+        return redirect(url_for('room', room_id=room_id))
+
+
+@app.route('/room/<int:room_id>/compute', methods=['GET', 'POST'])
+def compute(room_id):
+    if 'id' not in session:
+        return redirect(url_for('login'))
+
+    room = Room.query.get(room_id)
+    if not room:
+        return abort(404)
+
+    # 查询操作者是否为房主
+    if session.get('id') != room.owner_id:
+        return redirect(url_for('room', room_id=room.id))
+
+    # 开始计算
+    all_inputs = room.inputs
+    result = ''
+    for input in all_inputs:
+        result += input.input_text + '\n'
+    room.result = result
+    room.status = 'finished'
+    db.session.commit()
+    print(f'{datetime.datetime.now()}, 房间 {room_id} 计算完成')
+    return redirect(url_for('room', room_id=room.id))
 
 
 # 自定义错误页面
@@ -380,7 +454,8 @@ def init_db():
         # 创建房间
         print('创建示例房间')
         for i in range(1, 11):
-            room = Room(name=f'房间{i}', capacity=10, password='123456', owner_id=1)
+            room = Room(name=f'房间{i}', capacity=10, password='123456', owner_id=1
+                        , status='waiting', result='')
             db.session.add(room)  # session记录到数据库
         db.session.commit()
 
@@ -412,7 +487,6 @@ def init_db():
         for user in users:
             print(user.name, user.rooms)
         print('数据库初始化完成')
-
 
 
 if __name__ == '__main__':

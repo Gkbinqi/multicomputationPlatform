@@ -51,6 +51,24 @@
         .room-details th, .participants-list th {
             background-color: #f4f4f4;
         }
+        .result {
+            margin-bottom: 20px;
+        }
+        .buttons {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .buttons button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            background-color: #333;
+            color: white;
+            cursor: pointer;
+        }
+        .buttons button:hover {
+            background-color: #555;
+        }
     </style>
 </head>
 <body>
@@ -84,6 +102,10 @@
                     <td>{{ room.password }}</td>
                 </tr>
                 <tr>
+                    <th>Status</th>
+                    <td>{{ room.status }}</td>
+                </tr>
+                <tr>
                     <th>Owner ID</th>
                     <td>{{ room.owner_id }}</td>
                 </tr>
@@ -108,6 +130,21 @@
                 </tbody>
             </table>
         </div>
+        <div class="result">
+            <h2>Result</h2>
+            {% if room.status == 'finished' %}
+            <p>The result is ready. You can view it below.</p>
+            <p>{{ room.result }}</p>
+            {% else %}
+            <p>The result is not ready yet. Please wait for the owner to complete the quiz.</p>
+            {% endif %}
+        </div>
+        <div class="buttons">
+            <button onclick="location.href='{{ url_for('user_input', room_id=room.id) }}'">Input</button>
+            <button onclick="location.href='{{ url_for('compute', room_id=room.id) }}'">Compute Result</button>
+        </div>
     </div>
+    <script>
+    </script>
 </body>
 </html>
